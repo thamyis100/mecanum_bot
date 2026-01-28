@@ -1,0 +1,255 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mecanum_bot">
+  <xacro:arg name="controllers_yaml" default=""/>
+
+  <xacro:property name="PI" value="3.1415926535897931"/>
+
+  <!-- Dimensions -->
+  <xacro:property name="wheel_r" value="0.05"/>
+  <xacro:property name="wheel_w" value="0.055"/>
+  <xacro:property name="roller_r" value="0.01"/>
+  <xacro:property name="roller_w" value="${wheel_w}"/>
+  <xacro:property name="roller_angle" value="${PI/4}"/>
+  <xacro:property name="roller_phase" value="0"/>
+  <xacro:property name="roller_center_r" value="${wheel_r - roller_r}"/>
+  <xacro:property name="hub_r" value="${wheel_r - roller_r}"/>
+  <xacro:property name="hub_w" value="${wheel_w * 0.6}"/>
+  <xacro:property name="roller_mu1" value="0.5"/>
+  <xacro:property name="roller_mu2" value="0.5"/>
+  <xacro:property name="roller_kp" value="5e4"/>
+  <xacro:property name="roller_kd" value="5e1"/>
+  <xacro:property name="roller_joint_damping" value="0.02"/>
+  <xacro:property name="roller_joint_friction" value="0.005"/>
+  <xacro:property name="body_x" value="0.395"/>
+  <xacro:property name="body_y" value="0.215"/>
+  <xacro:property name="body_z" value="0.04"/>
+
+  <!-- Frames: base_footprint at ground, base_link is body center -->
+  <link name="base_footprint"/>
+
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="8.0"/>
+      <inertia ixx="0.10" ixy="0.0" ixz="0.0" iyy="0.10" iyz="0.0" izz="0.10"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_x} ${body_y} ${body_z}"/>
+      </geometry>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_x} ${body_y} ${body_z}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- base_link centered at (wheel_r + body_z/2) above ground -->
+  <joint name="base_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_footprint"/>
+    <origin xyz="0 0 ${-(2*wheel_r - body_z/2)}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Mecanum roller macro -->
+  <xacro:macro name="roller" params="parent idx angle sign">
+    <xacro:property name="roller_theta" value="${angle + roller_phase}"/>
+    <xacro:property name="roller_cx" value="${roller_center_r * cos(roller_theta)}"/>
+    <xacro:property name="roller_cz" value="${roller_center_r * sin(roller_theta)}"/>
+    <xacro:property name="roller_vx" value="${-sin(roller_theta) * cos(roller_angle)}"/>
+    <xacro:property name="roller_vy" value="${sign * sin(roller_angle)}"/>
+    <xacro:property name="roller_vz" value="${cos(roller_theta) * cos(roller_angle)}"/>
+    <xacro:property name="roller_yaw" value="${atan2(roller_vy, roller_vx)}"/>
+    <xacro:property name="roller_pitch" value="${atan2(sqrt(roller_vx*roller_vx + roller_vy*roller_vy), roller_vz)}"/>
+
+    <link name="${parent}_roller_${idx}_link">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="0.02"/>
+        <inertia ixx="0.000014" ixy="0.0" ixz="0.0" iyy="0.000014" iyz="0.0" izz="0.0000025"/>
+      </inertial>
+
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${roller_r}" length="${roller_w}"/>
+        </geometry>
+      </visual>
+
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${roller_r}" length="${roller_w}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${parent}_roller_${idx}_joint" type="continuous">
+      <parent link="${parent}_link"/>
+      <child link="${parent}_roller_${idx}_link"/>
+      <origin xyz="${roller_cx} 0 ${roller_cz}" rpy="0 ${roller_pitch} ${roller_yaw}"/>
+      <axis xyz="0 0 1"/>
+      <dynamics damping="${roller_joint_damping}" friction="${roller_joint_friction}"/>
+    </joint>
+
+    <gazebo reference="${parent}_roller_${idx}_link">
+      <mu1>${roller_mu1}</mu1>
+      <mu2>${roller_mu2}</mu2>
+      <kp>${roller_kp}</kp>
+      <kd>${roller_kd}</kd>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- Mecanum wheel macro -->
+  <xacro:macro name="wheel" params="name x y roller_sign">
+    <link name="${name}_link">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="10.14"/>
+        <inertia ixx="0.00007" ixy="0.0" ixz="0.0" iyy="0.00007" iyz="0.0" izz="0.00011"/>
+      </inertial>
+
+      <!-- Hub cylinder axis is Z in URDF, rotate to align with joint axis (Y) -->
+      <visual>
+        <origin xyz="0 0 0" rpy="${PI/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${hub_r}" length="${hub_w}"/>
+        </geometry>
+      </visual>
+
+      <collision>
+        <origin xyz="0 0 0" rpy="${PI/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${hub_r}" length="${hub_w}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Wheel centers are at wheel_r above ground, base_link is at wheel_r+body_z/2, so z = -(body_z/2) -->
+    <joint name="${name}_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${name}_link"/>
+      <origin xyz="${x} ${y} ${body_z/2 - wheel_r}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+
+    <xacro:roller parent="${name}" idx="0" angle="0" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="1" angle="${2*PI/9}" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="2" angle="${4*PI/9}" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="3" angle="${6*PI/9}" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="4" angle="${8*PI/9}" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="5" angle="${10*PI/9}" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="6" angle="${12*PI/9}" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="7" angle="${14*PI/9}" sign="${roller_sign}"/>
+    <xacro:roller parent="${name}" idx="8" angle="${16*PI/9}" sign="${roller_sign}"/>
+  </xacro:macro>
+
+  <!-- Wheels (x=0.20, y=0.15) -->
+  <xacro:wheel name="front_left_wheel"  x="0.20"  y="0.15" roller_sign="-1"/>
+  <xacro:wheel name="front_right_wheel" x="0.20"  y="-0.15" roller_sign="1"/>
+  <xacro:wheel name="rear_left_wheel"   x="-0.20" y="0.15" roller_sign="1"/>
+  <xacro:wheel name="rear_right_wheel"  x="-0.20" y="-0.15" roller_sign="-1"/>
+
+  <!-- Lidar -->
+  <link name="lidar_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.1"/>
+      <inertia ixx="0.00003083" ixy="0.0" ixz="0.0" iyy="0.00003083" iyz="0.0" izz="0.00002"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.02" length="0.05"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0.18 0 0.08" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Keep lidar_link from being merged -->
+  <gazebo reference="lidar_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+
+  <!-- Gazebo GPU lidar sensor -->
+  <gazebo reference="lidar_link">
+    <sensor name="gpu_lidar" type="gpu_lidar">
+      <topic>scan</topic>
+      <update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.141593</min_angle>
+            <max_angle>3.141593</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.12</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </ray>
+    </sensor>
+  </gazebo>
+
+  <!-- ros2_control for Gazebo Sim -->
+  <ros2_control name="GazeboSimSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+
+    <joint name="front_left_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="front_right_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rear_left_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rear_right_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <!-- gz_ros2_control plugin: reads robot_description from robot_state_publisher and loads controllers.yaml -->
+  <gazebo>
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <robot_param>robot_description</robot_param>
+      <robot_param_node>robot_state_publisher</robot_param_node>
+      <parameters>$(arg controllers_yaml)</parameters>
+    </plugin>
+  </gazebo>
+
+
+  <!-- Gazebo ground-truth odometry publisher -->
+  <gazebo>
+    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+      <dimensions>3</dimensions>
+      <odom_topic>/model/mecanum_bot/odometry</odom_topic>
+      <odom_frame>odom</odom_frame>
+      <base_frame>base_link</base_frame>
+      <publish_tf>false</publish_tf>
+    </plugin>
+  </gazebo>
+</robot>
